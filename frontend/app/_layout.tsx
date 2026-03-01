@@ -12,11 +12,12 @@ export default function RootLayout() {
           headerShown: false,
           contentStyle: { backgroundColor: '#0A0A0F' },
           animation: 'slide_from_right',
+          animationDuration: 250,
         }}
       >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="send" />
-        <Stack.Screen name="receive" />
+        <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="send" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="receive" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </View>
   );

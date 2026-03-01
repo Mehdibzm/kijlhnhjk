@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,113 +7,178 @@ import {
   SafeAreaView,
   ScrollView,
   Alert,
-  ActivityIndicator,
   Platform,
   Share,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
-import { getP2PService, PeerDevice, TransferProgress } from '../src/services/P2PService';
+
+// Demo mode for web preview
+const IS_DEMO_MODE = Platform.OS === 'web';
 
 interface ReceivedFile {
+  id: string;
   fileName: string;
-  filePath: string;
   fileSize: number;
   receivedAt: Date;
+  type: string;
 }
+
+// Demo files for preview
+const DEMO_FILES: ReceivedFile[] = [
+  { id: '1', fileName: 'vacation_photo.jpg', fileSize: 2456000, receivedAt: new Date(), type: 'image/jpeg' },
+  { id: '2', fileName: 'presentation.pdf', fileSize: 1234000, receivedAt: new Date(), type: 'application/pdf' },
+  { id: '3', fileName: 'app_update.apk', fileSize: 45600000, receivedAt: new Date(), type: 'application/vnd.android.package-archive' },
+];
 
 export default function ReceiveScreen() {
   const router = useRouter();
-  const [isSupported, setIsSupported] = useState<boolean | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
   const [isAdvertising, setIsAdvertising] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<string>('idle');
-  const [connectedPeer, setConnectedPeer] = useState<PeerDevice | null>(null);
+  const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([]);
-  const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
   const [deviceName] = useState(`QuickShare-${Math.random().toString(36).substr(2, 4).toUpperCase()}`);
 
-  const p2pService = getP2PService();
+  // Animations
+  const headerAnim = useRef(new Animated.Value(0)).current;
+  const startButtonAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const waveAnim1 = useRef(new Animated.Value(0)).current;
+  const waveAnim2 = useRef(new Animated.Value(0)).current;
+  const waveAnim3 = useRef(new Animated.Value(0)).current;
+  const deviceCardAnim = useRef(new Animated.Value(0)).current;
+  const filesAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const init = async () => {
-      const supported = await p2pService.isSupported();
-      setIsSupported(supported);
-
-      if (supported) {
-        const initialized = await p2pService.initialize();
-        setIsInitialized(initialized);
-
-        if (initialized) {
-          // Setup callbacks
-          p2pService.onConnectionChange((status, peer) => {
-            setConnectionStatus(status);
-            if (status === 'connected' && peer) {
-              setConnectedPeer(peer);
-            } else if (status === 'disconnected') {
-              setConnectedPeer(null);
-            }
-          });
-
-          p2pService.onFileReceived((fileName, filePath, fileSize) => {
-            setReceivedFiles((prev) => [
-              ...prev,
-              {
-                fileName,
-                filePath,
-                fileSize,
-                receivedAt: new Date(),
-              },
-            ]);
-            Alert.alert('File Received', `${fileName} has been received!`);
-          });
-
-          p2pService.onTransferProgress((progress) => {
-            setTransferProgress(progress);
-          });
-        }
-      }
-    };
-
-    init();
-
-    return () => {
-      p2pService.cleanup();
-    };
+    // Entrance animation
+    Animated.sequence([
+      Animated.spring(headerAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+      Animated.spring(startButtonAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+    ]).start();
   }, []);
 
-  const startAdvertising = async () => {
-    if (!isInitialized) return;
+  // Pulse animation when advertising
+  useEffect(() => {
+    if (isAdvertising) {
+      // Continuous pulse
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
 
-    try {
-      await p2pService.startAdvertising(deviceName);
-      setIsAdvertising(true);
-      setConnectionStatus('waiting');
-    } catch (e) {
-      Alert.alert('Error', 'Failed to start advertising');
+      // Wave animations
+      const createWave = (anim: Animated.Value, delay: number) => {
+        return Animated.loop(
+          Animated.sequence([
+            Animated.delay(delay),
+            Animated.parallel([
+              Animated.timing(anim, {
+                toValue: 1,
+                duration: 2000,
+                easing: Easing.out(Easing.ease),
+                useNativeDriver: true,
+              }),
+            ]),
+            Animated.timing(anim, {
+              toValue: 0,
+              duration: 0,
+              useNativeDriver: true,
+            }),
+          ])
+        );
+      };
+
+      createWave(waveAnim1, 0).start();
+      createWave(waveAnim2, 600).start();
+      createWave(waveAnim3, 1200).start();
+    } else {
+      pulseAnim.setValue(1);
+      waveAnim1.setValue(0);
+      waveAnim2.setValue(0);
+      waveAnim3.setValue(0);
+    }
+  }, [isAdvertising]);
+
+  const startAdvertising = () => {
+    setIsAdvertising(true);
+    setConnectionStatus('waiting');
+
+    // Device card animation
+    Animated.spring(deviceCardAnim, {
+      toValue: 1,
+      tension: 50,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+
+    if (IS_DEMO_MODE) {
+      // Demo: simulate connection after 3 seconds
+      setTimeout(() => {
+        setConnectionStatus('connected');
+        setConnectedDevice('Samsung Galaxy S24');
+        
+        // Demo: simulate receiving files
+        setTimeout(() => {
+          DEMO_FILES.forEach((file, index) => {
+            setTimeout(() => {
+              setReceivedFiles((prev) => [...prev, file]);
+              
+              // Animate files list
+              Animated.spring(filesAnim, {
+                toValue: 1,
+                tension: 50,
+                friction: 8,
+                useNativeDriver: true,
+              }).start();
+            }, index * 1000);
+          });
+        }, 1500);
+      }, 3000);
     }
   };
 
-  const stopAdvertising = async () => {
-    try {
-      await p2pService.stopAdvertising();
-      await p2pService.disconnect();
-    } catch (e) {
-      console.log('Stop advertising error:', e);
-    }
+  const stopAdvertising = () => {
     setIsAdvertising(false);
     setConnectionStatus('idle');
-    setConnectedPeer(null);
+    setConnectedDevice(null);
+    setReceivedFiles([]);
+    deviceCardAnim.setValue(0);
+    filesAnim.setValue(0);
   };
 
   const shareFile = async (file: ReceivedFile) => {
     try {
       if (Platform.OS !== 'web') {
         await Share.share({
-          url: file.filePath,
           title: file.fileName,
+          message: `Sharing ${file.fileName}`,
         });
+      } else {
+        Alert.alert('Share', `Would share: ${file.fileName}`);
       }
     } catch (e) {
       console.log('Share error:', e);
@@ -128,14 +193,13 @@ export default function ReceiveScreen() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getFileIcon = (fileName: string): keyof typeof Ionicons.glyphMap => {
-    const ext = fileName.split('.').pop()?.toLowerCase() || '';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
-    if (['mp4', 'mov', 'avi', 'mkv'].includes(ext)) return 'videocam';
-    if (['mp3', 'wav', 'aac', 'm4a'].includes(ext)) return 'musical-notes';
-    if (ext === 'pdf') return 'document-text';
-    if (['zip', 'rar', '7z'].includes(ext)) return 'archive';
-    if (ext === 'apk') return 'logo-android';
+  const getFileIcon = (type: string): keyof typeof Ionicons.glyphMap => {
+    if (type.startsWith('image/')) return 'image';
+    if (type.startsWith('video/')) return 'videocam';
+    if (type.startsWith('audio/')) return 'musical-notes';
+    if (type.includes('pdf')) return 'document-text';
+    if (type.includes('zip') || type.includes('rar')) return 'archive';
+    if (type.includes('apk') || type.includes('android')) return 'logo-android';
     return 'document';
   };
 
@@ -155,56 +219,26 @@ export default function ReceiveScreen() {
       case 'waiting':
         return 'Waiting for sender...';
       case 'connected':
-        return `Connected to ${connectedPeer?.name || 'device'}`;
-      case 'host':
-        return 'Ready to receive';
+        return `Connected to ${connectedDevice}`;
       default:
         return 'Not advertising';
     }
   };
 
-  // Not supported view
-  if (isSupported === false) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Receive Files</Text>
-          <View style={styles.placeholder} />
-        </View>
-        <View style={styles.centerContent}>
-          <Ionicons name="warning" size={60} color="#FFB800" />
-          <Text style={styles.unsupportedTitle}>Not Supported</Text>
-          <Text style={styles.unsupportedText}>
-            {Platform.OS === 'web'
-              ? 'P2P transfer is not available on web. Please use the mobile app.'
-              : 'Your device does not support WiFi Direct / Multipeer Connectivity.'}
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Loading view
-  if (isSupported === null || (isSupported && !isInitialized)) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Receive Files</Text>
-          <View style={styles.placeholder} />
-        </View>
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#00FF88" />
-          <Text style={styles.loadingText}>Initializing...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const createWaveStyle = (anim: Animated.Value) => ({
+    transform: [
+      {
+        scale: anim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 2.5],
+        }),
+      },
+    ],
+    opacity: anim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.6, 0],
+    }),
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -220,7 +254,18 @@ export default function ReceiveScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {!isAdvertising ? (
           /* Start Advertising Section */
-          <View style={styles.section}>
+          <Animated.View 
+            style={[
+              styles.section,
+              {
+                opacity: headerAnim,
+                transform: [{ translateY: headerAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [30, 0],
+                })}],
+              },
+            ]}
+          >
             <View style={styles.iconContainer}>
               <Ionicons name="download" size={50} color="#00FF88" />
             </View>
@@ -228,7 +273,9 @@ export default function ReceiveScreen() {
             <Text style={styles.sectionDescription}>
               {Platform.OS === 'android'
                 ? 'Make your device discoverable via WiFi Direct'
-                : 'Make your device visible to nearby iOS devices'}
+                : Platform.OS === 'ios'
+                  ? 'Make your device visible to nearby iOS devices'
+                  : 'Demo: Start receiving to see the full experience'}
             </Text>
 
             {/* Device Name */}
@@ -238,20 +285,35 @@ export default function ReceiveScreen() {
               <Text style={styles.deviceName}>{deviceName}</Text>
             </View>
 
-            <TouchableOpacity style={styles.startButton} onPress={startAdvertising}>
-              <Ionicons name="radio" size={24} color="#0A0A0F" />
-              <Text style={styles.startButtonText}>Start Receiving</Text>
-            </TouchableOpacity>
+            <Animated.View style={{ transform: [{ scale: startButtonAnim }] }}>
+              <TouchableOpacity style={styles.startButton} onPress={startAdvertising}>
+                <Ionicons name="radio" size={24} color="#0A0A0F" />
+                <Text style={styles.startButtonText}>Start Receiving</Text>
+              </TouchableOpacity>
+            </Animated.View>
 
             <Text style={styles.hint}>
               {Platform.OS === 'android'
                 ? 'This will create a WiFi Direct group for P2P transfer'
-                : 'This will advertise your device via Multipeer Connectivity'}
+                : Platform.OS === 'ios'
+                  ? 'This will advertise your device via Multipeer Connectivity'
+                  : 'In a real device, this would make you discoverable'}
             </Text>
-          </View>
+          </Animated.View>
         ) : (
           /* Advertising Active Section */
-          <View style={styles.section}>
+          <Animated.View 
+            style={[
+              styles.section,
+              {
+                opacity: deviceCardAnim,
+                transform: [{ scale: deviceCardAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.9, 1],
+                })}],
+              },
+            ]}
+          >
             {/* Status Badge */}
             <View
               style={[
@@ -259,77 +321,79 @@ export default function ReceiveScreen() {
                 { backgroundColor: `${getStatusColor()}15` },
               ]}
             >
-              <View style={[styles.statusDot, { backgroundColor: getStatusColor() }]} />
+              <Animated.View 
+                style={[
+                  styles.statusDot, 
+                  { 
+                    backgroundColor: getStatusColor(),
+                    transform: [{ scale: connectionStatus === 'waiting' ? pulseAnim : 1 }],
+                  },
+                ]} 
+              />
               <Text style={[styles.statusText, { color: getStatusColor() }]}>
                 {getStatusText()}
               </Text>
             </View>
 
-            {/* Device Info */}
+            {/* Device Card with Waves */}
             <View style={styles.deviceCard}>
-              <View style={styles.deviceCardIcon}>
-                <Ionicons
-                  name={Platform.OS === 'android' ? 'wifi' : 'bluetooth'}
-                  size={40}
-                  color="#00FF88"
-                />
+              <View style={styles.waveContainer}>
+                {connectionStatus === 'waiting' && (
+                  <>
+                    <Animated.View style={[styles.wave, createWaveStyle(waveAnim1)]} />
+                    <Animated.View style={[styles.wave, createWaveStyle(waveAnim2)]} />
+                    <Animated.View style={[styles.wave, createWaveStyle(waveAnim3)]} />
+                  </>
+                )}
+                <Animated.View 
+                  style={[
+                    styles.deviceCardIcon,
+                    { transform: [{ scale: pulseAnim }] },
+                  ]}
+                >
+                  <Ionicons
+                    name={Platform.OS === 'android' ? 'wifi' : 'bluetooth'}
+                    size={40}
+                    color="#00FF88"
+                  />
+                </Animated.View>
               </View>
               <Text style={styles.deviceCardName}>{deviceName}</Text>
               <Text style={styles.deviceCardHint}>
-                {Platform.OS === 'android'
-                  ? 'Senders should search for this device name'
-                  : 'Visible to nearby iOS devices'}
+                {connectionStatus === 'waiting'
+                  ? 'Broadcasting to nearby devices...'
+                  : 'Receiving files...'}
               </Text>
             </View>
 
-            {/* Transfer Progress */}
-            {transferProgress && transferProgress.status === 'transferring' && (
-              <View style={styles.progressContainer}>
-                <Text style={styles.progressText}>
-                  Receiving: {transferProgress.fileName}
-                </Text>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${transferProgress.progress}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.progressPercent}>
-                  {Math.round(transferProgress.progress)}%
-                </Text>
-              </View>
-            )}
-
             {/* Received Files */}
             {receivedFiles.length > 0 && (
-              <View style={styles.filesList}>
+              <Animated.View 
+                style={[
+                  styles.filesList,
+                  {
+                    opacity: filesAnim,
+                    transform: [{ translateY: filesAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [20, 0],
+                    })}],
+                  },
+                ]}
+              >
                 <Text style={styles.filesListTitle}>
                   Received Files ({receivedFiles.length})
                 </Text>
                 {receivedFiles.map((file, index) => (
-                  <View key={index} style={styles.fileItem}>
-                    <Ionicons
-                      name={getFileIcon(file.fileName)}
-                      size={28}
-                      color="#00FF88"
-                    />
-                    <View style={styles.fileInfo}>
-                      <Text style={styles.fileName} numberOfLines={1}>
-                        {file.fileName}
-                      </Text>
-                      <Text style={styles.fileSize}>{formatFileSize(file.fileSize)}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.shareButton}
-                      onPress={() => shareFile(file)}
-                    >
-                      <Ionicons name="share-outline" size={24} color="#00D9FF" />
-                    </TouchableOpacity>
-                  </View>
+                  <FileItem 
+                    key={file.id} 
+                    file={file} 
+                    index={index}
+                    onShare={() => shareFile(file)}
+                    formatFileSize={formatFileSize}
+                    getFileIcon={getFileIcon}
+                  />
                 ))}
-              </View>
+              </Animated.View>
             )}
 
             {/* Stop Button */}
@@ -337,10 +401,87 @@ export default function ReceiveScreen() {
               <Ionicons name="close-circle" size={20} color="#FF4444" />
               <Text style={styles.stopButtonText}>Stop Receiving</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// Animated file item component
+function FileItem({ 
+  file, 
+  index, 
+  onShare, 
+  formatFileSize, 
+  getFileIcon 
+}: { 
+  file: ReceivedFile; 
+  index: number;
+  onShare: () => void;
+  formatFileSize: (bytes: number) => string;
+  getFileIcon: (type: string) => keyof typeof Ionicons.glyphMap;
+}) {
+  const itemAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(index * 200),
+      Animated.spring(itemAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.timing(scaleAnim, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 100,
+        friction: 5,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    onShare();
+  };
+
+  return (
+    <Animated.View
+      style={{
+        transform: [
+          { scale: Animated.multiply(itemAnim, scaleAnim) },
+          { translateX: itemAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [-50, 0],
+          })},
+        ],
+        opacity: itemAnim,
+      }}
+    >
+      <View style={styles.fileItem}>
+        <View style={styles.fileIconContainer}>
+          <Ionicons name={getFileIcon(file.type)} size={28} color="#00FF88" />
+        </View>
+        <View style={styles.fileInfo}>
+          <Text style={styles.fileName} numberOfLines={1}>
+            {file.fileName}
+          </Text>
+          <Text style={styles.fileSize}>{formatFileSize(file.fileSize)}</Text>
+        </View>
+        <TouchableOpacity style={styles.shareButton} onPress={handlePress}>
+          <Ionicons name="share-outline" size={24} color="#00D9FF" />
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -376,30 +517,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
   },
-  centerContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666680',
-  },
-  unsupportedTitle: {
-    marginTop: 16,
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  unsupportedText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#666680',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
   section: {
     paddingTop: 32,
     alignItems: 'center',
@@ -424,6 +541,7 @@ const styles = StyleSheet.create({
     color: '#666680',
     textAlign: 'center',
     marginBottom: 24,
+    paddingHorizontal: 20,
   },
   deviceNameContainer: {
     flexDirection: 'row',
@@ -453,7 +571,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 16,
-    width: '100%',
+    width: 280,
   },
   startButtonText: {
     fontSize: 18,
@@ -495,14 +613,28 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0, 255, 136, 0.2)',
     marginBottom: 24,
   },
+  waveContainer: {
+    width: 120,
+    height: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  wave: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    borderColor: '#00FF88',
+  },
   deviceCardIcon: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+    backgroundColor: 'rgba(0, 255, 136, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
   },
   deviceCardName: {
     fontSize: 24,
@@ -515,34 +647,6 @@ const styles = StyleSheet.create({
     color: '#666680',
     marginTop: 8,
     textAlign: 'center',
-  },
-  progressContainer: {
-    width: '100%',
-    marginBottom: 24,
-    alignItems: 'center',
-  },
-  progressText: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    marginBottom: 12,
-  },
-  progressBar: {
-    width: '100%',
-    height: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#00FF88',
-    borderRadius: 4,
-  },
-  progressPercent: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#00FF88',
-    marginTop: 8,
   },
   filesList: {
     width: '100%',
@@ -563,6 +667,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(0, 255, 136, 0.1)',
+  },
+  fileIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fileInfo: {
     flex: 1,
@@ -596,6 +708,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 68, 68, 0.3)',
+    marginBottom: 40,
   },
   stopButtonText: {
     fontSize: 14,
