@@ -1,23 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  TextInput,
   ScrollView,
   Alert,
   ActivityIndicator,
   Platform,
-  KeyboardAvoidingView,
+  FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
-
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { getP2PService, PeerDevice, TransferProgress } from '../src/services/P2PService';
 
 interface SelectedFile {
   name: string;
@@ -28,14 +25,109 @@ interface SelectedFile {
 
 export default function SendScreen() {
   const router = useRouter();
-  const [sessionCode, setSessionCode] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [peers, setPeers] = useState<PeerDevice[]>([]);
+  const [selectedPeer, setSelectedPeer] = useState<PeerDevice | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [deviceId] = useState(() => `sender-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const p2pService = getP2PService();
+
+  // Check support and initialize
+  useEffect(() => {
+    const init = async () => {
+      const supported = await p2pService.isSupported();
+      setIsSupported(supported);
+
+      if (supported) {
+        const initialized = await p2pService.initialize();
+        setIsInitialized(initialized);
+
+        if (initialized) {
+          // Setup callbacks
+          p2pService.onPeersFound((foundPeers) => {
+            setPeers((prev) => {
+              // Merge new peers with existing, avoiding duplicates
+              const merged = [...prev];
+              foundPeers.forEach((newPeer) => {
+                const existingIndex = merged.findIndex((p) => p.id === newPeer.id);
+                if (existingIndex >= 0) {
+                  merged[existingIndex] = newPeer;
+                } else {
+                  merged.push(newPeer);
+                }
+              });
+              return merged;
+            });
+          });
+
+          p2pService.onConnectionChange((status, peer) => {
+            setConnectionStatus(status);
+            if (status === 'connected' && peer) {
+              setSelectedPeer(peer);
+              setIsConnecting(false);
+            } else if (status === 'disconnected') {
+              setIsConnecting(false);
+            }
+          });
+
+          p2pService.onTransferProgress((progress) => {
+            setTransferProgress(progress);
+          });
+        }
+      }
+    };
+
+    init();
+
+    return () => {
+      p2pService.cleanup();
+    };
+  }, []);
+
+  const startScanning = async () => {
+    if (!isInitialized) return;
+
+    setIsScanning(true);
+    setPeers([]);
+    try {
+      await p2pService.startDiscovery();
+    } catch (e) {
+      Alert.alert('Error', 'Failed to start scanning for devices');
+      setIsScanning(false);
+    }
+  };
+
+  const stopScanning = async () => {
+    try {
+      await p2pService.stopDiscovery();
+    } catch (e) {
+      console.log('Stop scanning error:', e);
+    }
+    setIsScanning(false);
+  };
+
+  const connectToPeer = async (peer: PeerDevice) => {
+    setIsConnecting(true);
+    setSelectedPeer(peer);
+
+    try {
+      const success = await p2pService.connectToPeer(peer.id);
+      if (!success) {
+        Alert.alert('Connection Failed', 'Could not connect to the device');
+        setIsConnecting(false);
+        setSelectedPeer(null);
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Connection failed');
+      setIsConnecting(false);
+      setSelectedPeer(null);
+    }
+  };
 
   const pickFiles = async () => {
     try {
@@ -63,90 +155,28 @@ export default function SendScreen() {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const connectToReceiver = async () => {
-    if (sessionCode.length !== 6) {
-      Alert.alert('Invalid Code', 'Please enter a valid 6-digit code');
+  const sendFiles = async () => {
+    if (connectionStatus !== 'connected' || selectedFiles.length === 0) {
+      Alert.alert('Error', 'Not connected or no files selected');
       return;
     }
 
-    setIsConnecting(true);
     try {
-      const response = await fetch(`${API_URL}/api/session/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: sessionCode,
-          device_id: deviceId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setSessionId(data.session.id);
-        setIsConnected(true);
-        Alert.alert('Connected!', 'You can now send files');
-      } else {
-        Alert.alert('Error', data.detail || 'Failed to connect');
+      for (const file of selectedFiles) {
+        await p2pService.sendFile(file.uri, file.name, file.size);
       }
-    } catch (error) {
-      console.error('Connection error:', error);
-      Alert.alert('Error', 'Failed to connect. Please try again.');
-    } finally {
-      setIsConnecting(false);
+      Alert.alert('Success', 'Files sent successfully!');
+      setSelectedFiles([]);
+    } catch (e) {
+      Alert.alert('Error', 'Failed to send files');
     }
   };
 
-  const sendFiles = async () => {
-    if (!sessionId || selectedFiles.length === 0) {
-      Alert.alert('Error', 'No files selected or not connected');
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadProgress(0);
-
-    try {
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        setUploadProgress(((i) / selectedFiles.length) * 100);
-
-        // Read file as base64
-        const base64Data = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-
-        // Upload file
-        const response = await fetch(`${API_URL}/api/file/upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            filename: file.name,
-            file_type: file.type,
-            file_size: file.size,
-            data: base64Data,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
-        }
-
-        setUploadProgress(((i + 1) / selectedFiles.length) * 100);
-      }
-
-      Alert.alert(
-        'Success!',
-        `${selectedFiles.length} file(s) sent successfully`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
-    } catch (error) {
-      console.error('Upload error:', error);
-      Alert.alert('Error', 'Failed to send files. Please try again.');
-    } finally {
-      setIsUploading(false);
-    }
+  const disconnect = async () => {
+    await p2pService.disconnect();
+    setConnectionStatus('disconnected');
+    setSelectedPeer(null);
+    setPeers([]);
   };
 
   const formatFileSize = (bytes: number) => {
@@ -157,7 +187,7 @@ export default function SendScreen() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getFileIcon = (type: string) => {
+  const getFileIcon = (type: string): keyof typeof Ionicons.glyphMap => {
     if (type.startsWith('image/')) return 'image';
     if (type.startsWith('video/')) return 'videocam';
     if (type.startsWith('audio/')) return 'musical-notes';
@@ -167,13 +197,38 @@ export default function SendScreen() {
     return 'document';
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        {/* Header */}
+  const renderPeerItem = ({ item }: { item: PeerDevice }) => (
+    <TouchableOpacity
+      style={[
+        styles.peerItem,
+        selectedPeer?.id === item.id && styles.peerItemSelected,
+      ]}
+      onPress={() => connectToPeer(item)}
+      disabled={isConnecting || connectionStatus === 'connected'}
+    >
+      <View style={styles.peerIcon}>
+        <Ionicons
+          name={Platform.OS === 'android' ? 'phone-portrait' : 'tablet-portrait'}
+          size={24}
+          color="#00D9FF"
+        />
+      </View>
+      <View style={styles.peerInfo}>
+        <Text style={styles.peerName}>{item.name}</Text>
+        <Text style={styles.peerStatus}>
+          {item.status === 'connected' ? 'Connected' : 'Available'}
+        </Text>
+      </View>
+      {isConnecting && selectedPeer?.id === item.id && (
+        <ActivityIndicator size="small" color="#00D9FF" />
+      )}
+    </TouchableOpacity>
+  );
+
+  // Not supported view
+  if (isSupported === false) {
+    return (
+      <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -181,117 +236,186 @@ export default function SendScreen() {
           <Text style={styles.headerTitle}>Send Files</Text>
           <View style={styles.placeholder} />
         </View>
+        <View style={styles.centerContent}>
+          <Ionicons name="warning" size={60} color="#FFB800" />
+          <Text style={styles.unsupportedTitle}>Not Supported</Text>
+          <Text style={styles.unsupportedText}>
+            {Platform.OS === 'web'
+              ? 'P2P transfer is not available on web. Please use the mobile app.'
+              : 'Your device does not support WiFi Direct / Multipeer Connectivity.'}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {!isConnected ? (
-            /* Connection Section */
-            <View style={styles.section}>
+  // Loading view
+  if (isSupported === null || (isSupported && !isInitialized)) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Send Files</Text>
+          <View style={styles.placeholder} />
+        </View>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color="#00D9FF" />
+          <Text style={styles.loadingText}>Initializing...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Send Files</Text>
+        <View style={styles.placeholder} />
+      </View>
+
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {connectionStatus !== 'connected' ? (
+          /* Scanning / Peer Selection */
+          <View style={styles.section}>
+            <View style={styles.scanHeader}>
               <View style={styles.iconContainer}>
-                <Ionicons name="qr-code" size={50} color="#00D9FF" />
+                <Ionicons name="search" size={40} color="#00D9FF" />
               </View>
-              <Text style={styles.sectionTitle}>Enter Session Code</Text>
+              <Text style={styles.sectionTitle}>Find Receivers</Text>
               <Text style={styles.sectionDescription}>
-                Enter the 6-digit code shown on the receiver's device
+                {Platform.OS === 'android'
+                  ? 'Scanning for devices with WiFi Direct'
+                  : 'Scanning for nearby iOS devices'}
               </Text>
-
-              <TextInput
-                style={styles.codeInput}
-                value={sessionCode}
-                onChangeText={(text) => setSessionCode(text.replace(/[^0-9]/g, '').slice(0, 6))}
-                placeholder="000000"
-                placeholderTextColor="#444455"
-                keyboardType="number-pad"
-                maxLength={6}
-                textAlign="center"
-              />
-
-              <TouchableOpacity
-                style={[
-                  styles.connectButton,
-                  sessionCode.length !== 6 && styles.buttonDisabled,
-                ]}
-                onPress={connectToReceiver}
-                disabled={isConnecting || sessionCode.length !== 6}
-              >
-                {isConnecting ? (
-                  <ActivityIndicator color="#0A0A0F" />
-                ) : (
-                  <>
-                    <Ionicons name="link" size={20} color="#0A0A0F" />
-                    <Text style={styles.connectButtonText}>Connect</Text>
-                  </>
-                )}
-              </TouchableOpacity>
             </View>
-          ) : (
-            /* File Selection Section */
-            <View style={styles.section}>
-              <View style={styles.connectedBadge}>
-                <Ionicons name="checkmark-circle" size={20} color="#00FF88" />
-                <Text style={styles.connectedText}>Connected</Text>
+
+            {/* Scan Button */}
+            <TouchableOpacity
+              style={[styles.scanButton, isScanning && styles.scanButtonActive]}
+              onPress={isScanning ? stopScanning : startScanning}
+            >
+              {isScanning ? (
+                <>
+                  <ActivityIndicator color="#0A0A0F" />
+                  <Text style={styles.scanButtonText}>Stop Scanning</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="radar" size={24} color="#0A0A0F" />
+                  <Text style={styles.scanButtonText}>Start Scanning</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Peers List */}
+            {peers.length > 0 && (
+              <View style={styles.peersSection}>
+                <Text style={styles.peersSectionTitle}>
+                  Available Devices ({peers.length})
+                </Text>
+                <FlatList
+                  data={peers}
+                  renderItem={renderPeerItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
               </View>
+            )}
 
-              {/* Select Files Button */}
-              <TouchableOpacity style={styles.selectFilesButton} onPress={pickFiles}>
-                <Ionicons name="add-circle" size={32} color="#00D9FF" />
-                <Text style={styles.selectFilesText}>Select Files</Text>
-                <Text style={styles.selectFilesHint}>Images, Videos, Documents, APKs...</Text>
-              </TouchableOpacity>
+            {isScanning && peers.length === 0 && (
+              <View style={styles.scanningIndicator}>
+                <ActivityIndicator size="small" color="#666680" />
+                <Text style={styles.scanningText}>Looking for devices...</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          /* Connected - File Selection */
+          <View style={styles.section}>
+            {/* Connected Badge */}
+            <View style={styles.connectedBadge}>
+              <Ionicons name="checkmark-circle" size={20} color="#00FF88" />
+              <Text style={styles.connectedText}>
+                Connected to {selectedPeer?.name || 'Device'}
+              </Text>
+            </View>
 
-              {/* Selected Files List */}
-              {selectedFiles.length > 0 && (
-                <View style={styles.filesList}>
-                  <Text style={styles.filesListTitle}>
-                    Selected Files ({selectedFiles.length})
-                  </Text>
-                  {selectedFiles.map((file, index) => (
-                    <View key={index} style={styles.fileItem}>
-                      <Ionicons
-                        name={getFileIcon(file.type) as any}
-                        size={24}
-                        color="#00D9FF"
-                      />
-                      <View style={styles.fileInfo}>
-                        <Text style={styles.fileName} numberOfLines={1}>
-                          {file.name}
-                        </Text>
-                        <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => removeFile(index)}
-                        style={styles.removeButton}
-                      >
-                        <Ionicons name="close-circle" size={24} color="#FF4444" />
-                      </TouchableOpacity>
+            {/* Select Files Button */}
+            <TouchableOpacity style={styles.selectFilesButton} onPress={pickFiles}>
+              <Ionicons name="add-circle" size={32} color="#00D9FF" />
+              <Text style={styles.selectFilesText}>Select Files</Text>
+              <Text style={styles.selectFilesHint}>Images, Videos, Documents, APKs...</Text>
+            </TouchableOpacity>
+
+            {/* Selected Files List */}
+            {selectedFiles.length > 0 && (
+              <View style={styles.filesList}>
+                <Text style={styles.filesListTitle}>
+                  Selected Files ({selectedFiles.length})
+                </Text>
+                {selectedFiles.map((file, index) => (
+                  <View key={index} style={styles.fileItem}>
+                    <Ionicons name={getFileIcon(file.type)} size={24} color="#00D9FF" />
+                    <View style={styles.fileInfo}>
+                      <Text style={styles.fileName} numberOfLines={1}>
+                        {file.name}
+                      </Text>
+                      <Text style={styles.fileSize}>{formatFileSize(file.size)}</Text>
                     </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Upload Progress */}
-              {isUploading && (
-                <View style={styles.progressContainer}>
-                  <Text style={styles.progressText}>Sending files...</Text>
-                  <View style={styles.progressBar}>
-                    <View
-                      style={[styles.progressFill, { width: `${uploadProgress}%` }]}
-                    />
+                    <TouchableOpacity
+                      onPress={() => removeFile(index)}
+                      style={styles.removeButton}
+                    >
+                      <Ionicons name="close-circle" size={24} color="#FF4444" />
+                    </TouchableOpacity>
                   </View>
-                  <Text style={styles.progressPercent}>{Math.round(uploadProgress)}%</Text>
-                </View>
-              )}
+                ))}
+              </View>
+            )}
 
-              {/* Send Button */}
-              {selectedFiles.length > 0 && !isUploading && (
+            {/* Transfer Progress */}
+            {transferProgress && transferProgress.status === 'transferring' && (
+              <View style={styles.progressContainer}>
+                <Text style={styles.progressText}>
+                  Sending: {transferProgress.fileName}
+                </Text>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${transferProgress.progress}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressPercent}>
+                  {Math.round(transferProgress.progress)}%
+                </Text>
+              </View>
+            )}
+
+            {/* Action Buttons */}
+            <View style={styles.actionButtons}>
+              {selectedFiles.length > 0 && (
                 <TouchableOpacity style={styles.sendButton} onPress={sendFiles}>
                   <Ionicons name="send" size={24} color="#0A0A0F" />
                   <Text style={styles.sendButtonText}>Send Files</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity style={styles.disconnectButton} onPress={disconnect}>
+                <Ionicons name="close-circle" size={20} color="#FF4444" />
+                <Text style={styles.disconnectButtonText}>Disconnect</Text>
+              </TouchableOpacity>
             </View>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </View>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -300,9 +424,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0F',
-  },
-  keyboardView: {
-    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -331,18 +452,45 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
   },
-  section: {
-    paddingTop: 40,
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666680',
+  },
+  unsupportedTitle: {
+    marginTop: 16,
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  unsupportedText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666680',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  section: {
+    paddingTop: 32,
+  },
+  scanHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
   },
   iconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: 'rgba(0, 217, 255, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
   },
   sectionTitle: {
     fontSize: 22,
@@ -354,21 +502,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666680',
     textAlign: 'center',
-    marginBottom: 32,
   },
-  codeInput: {
-    width: '100%',
-    height: 70,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    fontSize: 32,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    letterSpacing: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 217, 255, 0.3)',
-  },
-  connectButton: {
+  scanButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -377,23 +512,78 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 16,
-    marginTop: 24,
-    width: '100%',
   },
-  buttonDisabled: {
-    opacity: 0.5,
+  scanButtonActive: {
+    backgroundColor: '#FFB800',
   },
-  connectButtonText: {
+  scanButtonText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#0A0A0F',
   },
+  peersSection: {
+    marginTop: 32,
+  },
+  peersSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 16,
+  },
+  peerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  peerItemSelected: {
+    borderColor: '#00D9FF',
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+  },
+  peerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  peerInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  peerName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  peerStatus: {
+    fontSize: 12,
+    color: '#00FF88',
+    marginTop: 2,
+  },
+  scanningIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 32,
+  },
+  scanningText: {
+    fontSize: 14,
+    color: '#666680',
+  },
   connectedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'center',
     gap: 8,
     backgroundColor: 'rgba(0, 255, 136, 0.1)',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 20,
     marginBottom: 24,
@@ -425,7 +615,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   filesList: {
-    width: '100%',
     marginTop: 24,
   },
   filesListTitle: {
@@ -460,7 +649,6 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   progressContainer: {
-    width: '100%',
     marginTop: 24,
     alignItems: 'center',
   },
@@ -487,6 +675,10 @@ const styles = StyleSheet.create({
     color: '#00D9FF',
     marginTop: 8,
   },
+  actionButtons: {
+    marginTop: 24,
+    gap: 12,
+  },
   sendButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -496,12 +688,25 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 16,
-    marginTop: 24,
-    width: '100%',
   },
   sendButtonText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#0A0A0F',
+  },
+  disconnectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.3)',
+  },
+  disconnectButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF4444',
   },
 });

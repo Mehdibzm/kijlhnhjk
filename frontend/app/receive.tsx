@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,156 +8,117 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Share,
   Platform,
+  Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
-import QRCode from 'react-native-qrcode-svg';
-
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { getP2PService, PeerDevice, TransferProgress } from '../src/services/P2PService';
 
 interface ReceivedFile {
-  id: string;
-  filename: string;
-  file_type: string;
-  file_size: number;
-  uploaded_at: string;
-  downloaded: boolean;
+  fileName: string;
+  filePath: string;
+  fileSize: number;
+  receivedAt: Date;
 }
 
 export default function ReceiveScreen() {
   const router = useRouter();
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionCode, setSessionCode] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [sessionStatus, setSessionStatus] = useState<string>('waiting');
+  const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isAdvertising, setIsAdvertising] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<string>('idle');
+  const [connectedPeer, setConnectedPeer] = useState<PeerDevice | null>(null);
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([]);
-  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
-  const [deviceId] = useState(() => `receiver-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
+  const [deviceName] = useState(`QuickShare-${Math.random().toString(36).substr(2, 4).toUpperCase()}`);
 
-  const createSession = async () => {
-    setIsCreating(true);
-    try {
-      const response = await fetch(`${API_URL}/api/session/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: deviceId }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setSessionId(data.session.id);
-        setSessionCode(data.session.code);
-        setSessionStatus('waiting');
-      } else {
-        Alert.alert('Error', 'Failed to create session');
-      }
-    } catch (error) {
-      console.error('Session creation error:', error);
-      Alert.alert('Error', 'Failed to create session. Please try again.');
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const checkSessionStatus = useCallback(async () => {
-    if (!sessionId) return;
-
-    try {
-      const response = await fetch(`${API_URL}/api/session/${sessionId}/status`);
-      const data = await response.json();
-
-      if (response.ok) {
-        setSessionStatus(data.status);
-
-        // Fetch files if session is connected or transferring
-        if (data.status === 'connected' || data.status === 'transferring') {
-          fetchFiles();
-        }
-      }
-    } catch (error) {
-      console.error('Status check error:', error);
-    }
-  }, [sessionId]);
-
-  const fetchFiles = async () => {
-    if (!sessionId) return;
-
-    try {
-      const response = await fetch(`${API_URL}/api/session/${sessionId}/files`);
-      const data = await response.json();
-
-      if (response.ok && data.files) {
-        setReceivedFiles(data.files);
-      }
-    } catch (error) {
-      console.error('Fetch files error:', error);
-    }
-  };
-
-  const downloadFile = async (file: ReceivedFile) => {
-    setDownloadingFile(file.id);
-    try {
-      const response = await fetch(`${API_URL}/api/file/${file.id}`);
-      const data = await response.json();
-
-      if (response.ok && data.data) {
-        // Save file locally
-        const fileUri = `${FileSystem.documentDirectory}${file.filename}`;
-        await FileSystem.writeAsStringAsync(fileUri, data.data, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-
-        // Update local state
-        setReceivedFiles((prev) =>
-          prev.map((f) => (f.id === file.id ? { ...f, downloaded: true } : f))
-        );
-
-        // Share option
-        if (Platform.OS !== 'web') {
-          Alert.alert(
-            'Download Complete',
-            `${file.filename} has been saved`,
-            [
-              { text: 'OK' },
-              {
-                text: 'Share',
-                onPress: () => Share.share({ url: fileUri }),
-              },
-            ]
-          );
-        } else {
-          Alert.alert('Success', `${file.filename} downloaded`);
-        }
-      }
-    } catch (error) {
-      console.error('Download error:', error);
-      Alert.alert('Error', 'Failed to download file');
-    } finally {
-      setDownloadingFile(null);
-    }
-  };
-
-  const endSession = async () => {
-    if (sessionId) {
-      try {
-        await fetch(`${API_URL}/api/session/${sessionId}`, { method: 'DELETE' });
-      } catch (error) {
-        console.error('End session error:', error);
-      }
-    }
-    router.back();
-  };
+  const p2pService = getP2PService();
 
   useEffect(() => {
-    if (sessionId) {
-      const interval = setInterval(checkSessionStatus, 2000);
-      return () => clearInterval(interval);
+    const init = async () => {
+      const supported = await p2pService.isSupported();
+      setIsSupported(supported);
+
+      if (supported) {
+        const initialized = await p2pService.initialize();
+        setIsInitialized(initialized);
+
+        if (initialized) {
+          // Setup callbacks
+          p2pService.onConnectionChange((status, peer) => {
+            setConnectionStatus(status);
+            if (status === 'connected' && peer) {
+              setConnectedPeer(peer);
+            } else if (status === 'disconnected') {
+              setConnectedPeer(null);
+            }
+          });
+
+          p2pService.onFileReceived((fileName, filePath, fileSize) => {
+            setReceivedFiles((prev) => [
+              ...prev,
+              {
+                fileName,
+                filePath,
+                fileSize,
+                receivedAt: new Date(),
+              },
+            ]);
+            Alert.alert('File Received', `${fileName} has been received!`);
+          });
+
+          p2pService.onTransferProgress((progress) => {
+            setTransferProgress(progress);
+          });
+        }
+      }
+    };
+
+    init();
+
+    return () => {
+      p2pService.cleanup();
+    };
+  }, []);
+
+  const startAdvertising = async () => {
+    if (!isInitialized) return;
+
+    try {
+      await p2pService.startAdvertising(deviceName);
+      setIsAdvertising(true);
+      setConnectionStatus('waiting');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to start advertising');
     }
-  }, [sessionId, checkSessionStatus]);
+  };
+
+  const stopAdvertising = async () => {
+    try {
+      await p2pService.stopAdvertising();
+      await p2pService.disconnect();
+    } catch (e) {
+      console.log('Stop advertising error:', e);
+    }
+    setIsAdvertising(false);
+    setConnectionStatus('idle');
+    setConnectedPeer(null);
+  };
+
+  const shareFile = async (file: ReceivedFile) => {
+    try {
+      if (Platform.OS !== 'web') {
+        await Share.share({
+          url: file.filePath,
+          title: file.fileName,
+        });
+      }
+    } catch (e) {
+      console.log('Share error:', e);
+    }
+  };
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -167,48 +128,89 @@ export default function ReceiveScreen() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getFileIcon = (type: string) => {
-    if (type.startsWith('image/')) return 'image';
-    if (type.startsWith('video/')) return 'videocam';
-    if (type.startsWith('audio/')) return 'musical-notes';
-    if (type.includes('pdf')) return 'document-text';
-    if (type.includes('zip') || type.includes('rar')) return 'archive';
-    if (type.includes('apk') || type.includes('android')) return 'logo-android';
+  const getFileIcon = (fileName: string): keyof typeof Ionicons.glyphMap => {
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
+    if (['mp4', 'mov', 'avi', 'mkv'].includes(ext)) return 'videocam';
+    if (['mp3', 'wav', 'aac', 'm4a'].includes(ext)) return 'musical-notes';
+    if (ext === 'pdf') return 'document-text';
+    if (['zip', 'rar', '7z'].includes(ext)) return 'archive';
+    if (ext === 'apk') return 'logo-android';
     return 'document';
   };
 
   const getStatusColor = () => {
-    switch (sessionStatus) {
+    switch (connectionStatus) {
       case 'connected':
-      case 'transferring':
         return '#00FF88';
-      case 'completed':
-        return '#00D9FF';
-      default:
+      case 'waiting':
         return '#FFB800';
+      default:
+        return '#666680';
     }
   };
 
   const getStatusText = () => {
-    switch (sessionStatus) {
+    switch (connectionStatus) {
       case 'waiting':
         return 'Waiting for sender...';
       case 'connected':
-        return 'Sender connected!';
-      case 'transferring':
-        return 'Receiving files...';
-      case 'completed':
-        return 'Transfer complete';
+        return `Connected to ${connectedPeer?.name || 'device'}`;
+      case 'host':
+        return 'Ready to receive';
       default:
-        return sessionStatus;
+        return 'Not advertising';
     }
   };
+
+  // Not supported view
+  if (isSupported === false) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Receive Files</Text>
+          <View style={styles.placeholder} />
+        </View>
+        <View style={styles.centerContent}>
+          <Ionicons name="warning" size={60} color="#FFB800" />
+          <Text style={styles.unsupportedTitle}>Not Supported</Text>
+          <Text style={styles.unsupportedText}>
+            {Platform.OS === 'web'
+              ? 'P2P transfer is not available on web. Please use the mobile app.'
+              : 'Your device does not support WiFi Direct / Multipeer Connectivity.'}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Loading view
+  if (isSupported === null || (isSupported && !isInitialized)) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Receive Files</Text>
+          <View style={styles.placeholder} />
+        </View>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color="#00FF88" />
+          <Text style={styles.loadingText}>Initializing...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={endSession} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Receive Files</Text>
@@ -216,59 +218,89 @@ export default function ReceiveScreen() {
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {!sessionCode ? (
-          /* Create Session Section */
+        {!isAdvertising ? (
+          /* Start Advertising Section */
           <View style={styles.section}>
             <View style={styles.iconContainer}>
               <Ionicons name="download" size={50} color="#00FF88" />
             </View>
             <Text style={styles.sectionTitle}>Ready to Receive</Text>
             <Text style={styles.sectionDescription}>
-              Create a session and share the code with the sender
+              {Platform.OS === 'android'
+                ? 'Make your device discoverable via WiFi Direct'
+                : 'Make your device visible to nearby iOS devices'}
             </Text>
 
-            <TouchableOpacity
-              style={styles.createButton}
-              onPress={createSession}
-              disabled={isCreating}
-            >
-              {isCreating ? (
-                <ActivityIndicator color="#0A0A0F" />
-              ) : (
-                <>
-                  <Ionicons name="add-circle" size={24} color="#0A0A0F" />
-                  <Text style={styles.createButtonText}>Create Session</Text>
-                </>
-              )}
+            {/* Device Name */}
+            <View style={styles.deviceNameContainer}>
+              <Ionicons name="phone-portrait" size={20} color="#00D9FF" />
+              <Text style={styles.deviceNameLabel}>Your device name:</Text>
+              <Text style={styles.deviceName}>{deviceName}</Text>
+            </View>
+
+            <TouchableOpacity style={styles.startButton} onPress={startAdvertising}>
+              <Ionicons name="radio" size={24} color="#0A0A0F" />
+              <Text style={styles.startButtonText}>Start Receiving</Text>
             </TouchableOpacity>
+
+            <Text style={styles.hint}>
+              {Platform.OS === 'android'
+                ? 'This will create a WiFi Direct group for P2P transfer'
+                : 'This will advertise your device via Multipeer Connectivity'}
+            </Text>
           </View>
         ) : (
-          /* Session Active Section */
+          /* Advertising Active Section */
           <View style={styles.section}>
             {/* Status Badge */}
-            <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor()}15` }]}>
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: `${getStatusColor()}15` },
+              ]}
+            >
               <View style={[styles.statusDot, { backgroundColor: getStatusColor() }]} />
               <Text style={[styles.statusText, { color: getStatusColor() }]}>
                 {getStatusText()}
               </Text>
             </View>
 
-            {/* QR Code */}
-            <View style={styles.qrContainer}>
-              <QRCode
-                value={sessionCode}
-                size={180}
-                backgroundColor="#FFFFFF"
-                color="#0A0A0F"
-              />
+            {/* Device Info */}
+            <View style={styles.deviceCard}>
+              <View style={styles.deviceCardIcon}>
+                <Ionicons
+                  name={Platform.OS === 'android' ? 'wifi' : 'bluetooth'}
+                  size={40}
+                  color="#00FF88"
+                />
+              </View>
+              <Text style={styles.deviceCardName}>{deviceName}</Text>
+              <Text style={styles.deviceCardHint}>
+                {Platform.OS === 'android'
+                  ? 'Senders should search for this device name'
+                  : 'Visible to nearby iOS devices'}
+              </Text>
             </View>
 
-            {/* Session Code */}
-            <View style={styles.codeContainer}>
-              <Text style={styles.codeLabel}>Session Code</Text>
-              <Text style={styles.codeValue}>{sessionCode}</Text>
-              <Text style={styles.codeHint}>Share this code with the sender</Text>
-            </View>
+            {/* Transfer Progress */}
+            {transferProgress && transferProgress.status === 'transferring' && (
+              <View style={styles.progressContainer}>
+                <Text style={styles.progressText}>
+                  Receiving: {transferProgress.fileName}
+                </Text>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${transferProgress.progress}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressPercent}>
+                  {Math.round(transferProgress.progress)}%
+                </Text>
+              </View>
+            )}
 
             {/* Received Files */}
             {receivedFiles.length > 0 && (
@@ -276,46 +308,34 @@ export default function ReceiveScreen() {
                 <Text style={styles.filesListTitle}>
                   Received Files ({receivedFiles.length})
                 </Text>
-                {receivedFiles.map((file) => (
-                  <View key={file.id} style={styles.fileItem}>
+                {receivedFiles.map((file, index) => (
+                  <View key={index} style={styles.fileItem}>
                     <Ionicons
-                      name={getFileIcon(file.file_type) as any}
+                      name={getFileIcon(file.fileName)}
                       size={28}
                       color="#00FF88"
                     />
                     <View style={styles.fileInfo}>
                       <Text style={styles.fileName} numberOfLines={1}>
-                        {file.filename}
+                        {file.fileName}
                       </Text>
-                      <Text style={styles.fileSize}>{formatFileSize(file.file_size)}</Text>
+                      <Text style={styles.fileSize}>{formatFileSize(file.fileSize)}</Text>
                     </View>
                     <TouchableOpacity
-                      style={[
-                        styles.downloadButton,
-                        file.downloaded && styles.downloadedButton,
-                      ]}
-                      onPress={() => downloadFile(file)}
-                      disabled={downloadingFile === file.id}
+                      style={styles.shareButton}
+                      onPress={() => shareFile(file)}
                     >
-                      {downloadingFile === file.id ? (
-                        <ActivityIndicator size="small" color="#00FF88" />
-                      ) : (
-                        <Ionicons
-                          name={file.downloaded ? 'checkmark-circle' : 'download'}
-                          size={24}
-                          color={file.downloaded ? '#00FF88' : '#FFFFFF'}
-                        />
-                      )}
+                      <Ionicons name="share-outline" size={24} color="#00D9FF" />
                     </TouchableOpacity>
                   </View>
                 ))}
               </View>
             )}
 
-            {/* End Session Button */}
-            <TouchableOpacity style={styles.endButton} onPress={endSession}>
+            {/* Stop Button */}
+            <TouchableOpacity style={styles.stopButton} onPress={stopAdvertising}>
               <Ionicons name="close-circle" size={20} color="#FF4444" />
-              <Text style={styles.endButtonText}>End Session</Text>
+              <Text style={styles.stopButtonText}>Stop Receiving</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -356,8 +376,32 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
   },
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666680',
+  },
+  unsupportedTitle: {
+    marginTop: 16,
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  unsupportedText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666680',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
   section: {
-    paddingTop: 40,
+    paddingTop: 32,
     alignItems: 'center',
   },
   iconContainer: {
@@ -379,9 +423,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666680',
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: 24,
   },
-  createButton: {
+  deviceNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 24,
+  },
+  deviceNameLabel: {
+    fontSize: 14,
+    color: '#666680',
+  },
+  deviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#00D9FF',
+  },
+  startButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -392,10 +455,17 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     width: '100%',
   },
-  createButtonText: {
+  startButtonText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#0A0A0F',
+  },
+  hint: {
+    fontSize: 12,
+    color: '#444455',
+    textAlign: 'center',
+    marginTop: 16,
+    paddingHorizontal: 20,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -415,30 +485,63 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  qrContainer: {
-    padding: 20,
-    backgroundColor: '#FFFFFF',
+  deviceCard: {
+    width: '100%',
+    backgroundColor: 'rgba(0, 255, 136, 0.05)',
     borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 136, 0.2)',
     marginBottom: 24,
   },
-  codeContainer: {
+  deviceCardIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 16,
   },
-  codeLabel: {
-    fontSize: 14,
-    color: '#666680',
-    marginBottom: 8,
-  },
-  codeValue: {
-    fontSize: 40,
+  deviceCardName: {
+    fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 8,
+    letterSpacing: 1,
   },
-  codeHint: {
+  deviceCardHint: {
     fontSize: 12,
     color: '#666680',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  progressContainer: {
+    width: '100%',
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  progressText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  progressBar: {
+    width: '100%',
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#00FF88',
+    borderRadius: 4,
+  },
+  progressPercent: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#00FF88',
     marginTop: 8,
   },
   filesList: {
@@ -475,18 +578,15 @@ const styles = StyleSheet.create({
     color: '#666680',
     marginTop: 2,
   },
-  downloadButton: {
+  shareButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  downloadedButton: {
-    backgroundColor: 'rgba(0, 255, 136, 0.2)',
-  },
-  endButton: {
+  stopButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -496,9 +596,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 68, 68, 0.3)',
-    marginTop: 16,
   },
-  endButtonText: {
+  stopButtonText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#FF4444',

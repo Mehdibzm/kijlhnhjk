@@ -5,15 +5,24 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  Dimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-const { width } = Dimensions.get('window');
-
 export default function HomeScreen() {
   const router = useRouter();
+
+  const getPlatformInfo = () => {
+    if (Platform.OS === 'android') {
+      return { method: 'WiFi Direct', icon: 'wifi' as const };
+    } else if (Platform.OS === 'ios') {
+      return { method: 'Multipeer', icon: 'bluetooth' as const };
+    }
+    return { method: 'Demo Mode', icon: 'globe' as const };
+  };
+
+  const platformInfo = getPlatformInfo();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -24,7 +33,15 @@ export default function HomeScreen() {
             <Ionicons name="swap-horizontal" size={40} color="#00D9FF" />
           </View>
           <Text style={styles.title}>QuickShare</Text>
-          <Text style={styles.subtitle}>Transfer files instantly</Text>
+          <Text style={styles.subtitle}>Transfer files offline</Text>
+          
+          {/* Platform Badge */}
+          <View style={styles.platformBadge}>
+            <Ionicons name={platformInfo.icon} size={14} color="#00D9FF" />
+            <Text style={styles.platformText}>
+              {Platform.OS === 'web' ? 'Web Preview' : `${Platform.OS.toUpperCase()} - ${platformInfo.method}`}
+            </Text>
+          </View>
         </View>
 
         {/* Main Buttons */}
@@ -39,7 +56,13 @@ export default function HomeScreen() {
               <Ionicons name="arrow-up-circle" size={60} color="#00D9FF" />
             </View>
             <Text style={styles.buttonTitle}>Send</Text>
-            <Text style={styles.buttonDescription}>Share files to nearby devices</Text>
+            <Text style={styles.buttonDescription}>
+              {Platform.OS === 'android' 
+                ? 'Find nearby devices via WiFi Direct' 
+                : Platform.OS === 'ios'
+                  ? 'Find nearby iOS devices'
+                  : 'Share files to nearby devices'}
+            </Text>
           </TouchableOpacity>
 
           {/* Receive Button */}
@@ -52,13 +75,20 @@ export default function HomeScreen() {
               <Ionicons name="arrow-down-circle" size={60} color="#00FF88" />
             </View>
             <Text style={styles.buttonTitle}>Receive</Text>
-            <Text style={styles.buttonDescription}>Get files from other devices</Text>
+            <Text style={styles.buttonDescription}>
+              {Platform.OS === 'android' 
+                ? 'Make device discoverable' 
+                : Platform.OS === 'ios'
+                  ? 'Advertise to nearby devices'
+                  : 'Get files from other devices'}
+            </Text>
           </TouchableOpacity>
         </View>
 
         {/* Footer */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Secure & Fast File Transfer</Text>
+          <Ionicons name="shield-checkmark" size={16} color="#444455" />
+          <Text style={styles.footerText}>No Internet Required - Direct P2P Transfer</Text>
         </View>
       </View>
     </SafeAreaView>
@@ -100,6 +130,21 @@ const styles = StyleSheet.create({
     color: '#666680',
     marginTop: 8,
   },
+  platformBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  platformText: {
+    fontSize: 12,
+    color: '#00D9FF',
+    fontWeight: '500',
+  },
   buttonsContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -131,9 +176,13 @@ const styles = StyleSheet.create({
   buttonDescription: {
     fontSize: 14,
     color: '#666680',
+    textAlign: 'center',
   },
   footer: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   footerText: {
     fontSize: 12,
