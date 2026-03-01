@@ -1,0 +1,50 @@
+{
+  "health_check": {
+    "success": true,
+    "message": "Health check passed - {'status': 'healthy', 'timestamp': '2026-03-01T14:52:30.096206'}",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:30.112826"
+  },
+  "create_session": {
+    "success": true,
+    "message": "Session created: ID=e24fbb87-3b43-4982-920e-f874fd080dd4, Code=913941",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:30.670232"
+  },
+  "join_session": {
+    "success": true,
+    "message": "Successfully joined session 913941",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:31.220424"
+  },
+  "session_status": {
+    "success": true,
+    "message": "Status: connected, Files: 0, Has sender: True",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:31.768951"
+  },
+  "file_upload": {
+    "success": true,
+    "message": "File uploaded: ID=41129008-53b5-4ff1-b36a-818482a9ca3b, Name=test_document.txt, Size=51",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:32.330178"
+  },
+  "get_session_files": {
+    "success": true,
+    "message": "Found 1 file(s), including our test file",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:32.885022"
+  },
+  "download_file": {
+    "success": true,
+    "message": "File downloaded successfully: test_document.txt (51 bytes)",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:33.469609"
+  },
+  "delete_session": {
+    "success": true,
+    "message": "Session e24fbb87-3b43-4982-920e-f874fd080dd4 deleted successfully",
+    "response_data": null,
+    "timestamp": "2026-03-01T14:52:34.079401"
+  }
+}
