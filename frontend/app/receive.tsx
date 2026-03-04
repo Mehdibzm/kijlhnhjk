@@ -11,9 +11,13 @@ import {
   Share,
   Animated,
   Easing,
+  Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
+
+const { width } = Dimensions.get('window');
 
 // Demo mode for web preview
 const IS_DEMO_MODE = Platform.OS === 'web';
@@ -39,6 +43,7 @@ export default function ReceiveScreen() {
   const [connectionStatus, setConnectionStatus] = useState<string>('idle');
   const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([]);
+  const [sessionCode] = useState(() => Math.random().toString().substring(2, 8));
   const [deviceName] = useState(`QuickShare-${Math.random().toString(36).substr(2, 4).toUpperCase()}`);
 
   // Animations
@@ -49,6 +54,7 @@ export default function ReceiveScreen() {
   const waveAnim2 = useRef(new Animated.Value(0)).current;
   const waveAnim3 = useRef(new Animated.Value(0)).current;
   const deviceCardAnim = useRef(new Animated.Value(0)).current;
+  const qrAnim = useRef(new Animated.Value(0)).current;
   const filesAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -127,16 +133,24 @@ export default function ReceiveScreen() {
     setIsAdvertising(true);
     setConnectionStatus('waiting');
 
-    // Device card animation
-    Animated.spring(deviceCardAnim, {
-      toValue: 1,
-      tension: 50,
-      friction: 7,
-      useNativeDriver: true,
-    }).start();
+    // Animations
+    Animated.parallel([
+      Animated.spring(deviceCardAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+      Animated.spring(qrAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
     if (IS_DEMO_MODE) {
-      // Demo: simulate connection after 3 seconds
+      // Demo: simulate connection after 4 seconds
       setTimeout(() => {
         setConnectionStatus('connected');
         setConnectedDevice('Samsung Galaxy S24');
@@ -157,7 +171,7 @@ export default function ReceiveScreen() {
             }, index * 1000);
           });
         }, 1500);
-      }, 3000);
+      }, 4000);
     }
   };
 
@@ -167,6 +181,7 @@ export default function ReceiveScreen() {
     setConnectedDevice(null);
     setReceivedFiles([]);
     deviceCardAnim.setValue(0);
+    qrAnim.setValue(0);
     filesAnim.setValue(0);
   };
 
@@ -271,49 +286,39 @@ export default function ReceiveScreen() {
             </View>
             <Text style={styles.sectionTitle}>Ready to Receive</Text>
             <Text style={styles.sectionDescription}>
-              {Platform.OS === 'android'
-                ? 'Make your device discoverable via WiFi Direct'
-                : Platform.OS === 'ios'
-                  ? 'Make your device visible to nearby iOS devices'
-                  : 'Demo: Start receiving to see the full experience'}
+              Start receiving to show your QR code and make your device discoverable
             </Text>
 
             {/* Device Name */}
             <View style={styles.deviceNameContainer}>
               <Ionicons name="phone-portrait" size={20} color="#00D9FF" />
-              <Text style={styles.deviceNameLabel}>Your device name:</Text>
+              <Text style={styles.deviceNameLabel}>Your device:</Text>
               <Text style={styles.deviceName}>{deviceName}</Text>
             </View>
 
-            <Animated.View style={{ transform: [{ scale: startButtonAnim }] }}>
+            {/* Connection Methods Info */}
+            <View style={styles.methodsInfo}>
+              <Text style={styles.methodsTitle}>Senders can connect via:</Text>
+              <View style={styles.methodItem}>
+                <Ionicons name="qr-code" size={18} color="#00D9FF" />
+                <Text style={styles.methodText}>Scan QR Code (fastest)</Text>
+              </View>
+              <View style={styles.methodItem}>
+                <Ionicons name="wifi" size={18} color="#00FF88" />
+                <Text style={styles.methodText}>Device Discovery (auto)</Text>
+              </View>
+            </View>
+
+            <Animated.View style={{ transform: [{ scale: startButtonAnim }], width: '100%' }}>
               <TouchableOpacity style={styles.startButton} onPress={startAdvertising}>
                 <Ionicons name="radio-outline" size={24} color="#0A0A0F" />
                 <Text style={styles.startButtonText}>Start Receiving</Text>
               </TouchableOpacity>
             </Animated.View>
-
-            <Text style={styles.hint}>
-              {Platform.OS === 'android'
-                ? 'This will create a WiFi Direct group for P2P transfer'
-                : Platform.OS === 'ios'
-                  ? 'This will advertise your device via Multipeer Connectivity'
-                  : 'In a real device, this would make you discoverable'}
-            </Text>
           </Animated.View>
         ) : (
           /* Advertising Active Section */
-          <Animated.View 
-            style={[
-              styles.section,
-              {
-                opacity: deviceCardAnim,
-                transform: [{ scale: deviceCardAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.9, 1],
-                })}],
-              },
-            ]}
-          >
+          <View style={styles.section}>
             {/* Status Badge */}
             <View
               style={[
@@ -335,8 +340,48 @@ export default function ReceiveScreen() {
               </Text>
             </View>
 
-            {/* Device Card with Waves */}
-            <View style={styles.deviceCard}>
+            {/* QR Code Card */}
+            <Animated.View 
+              style={[
+                styles.qrCard,
+                {
+                  opacity: qrAnim,
+                  transform: [{ scale: qrAnim }],
+                },
+              ]}
+            >
+              <Text style={styles.qrTitle}>Scan to Connect</Text>
+              <View style={styles.qrContainer}>
+                <QRCode
+                  value={`quickshare://${sessionCode}`}
+                  size={180}
+                  backgroundColor="#FFFFFF"
+                  color="#0A0A0F"
+                />
+              </View>
+              <View style={styles.sessionCodeContainer}>
+                <Text style={styles.sessionCodeLabel}>Session Code</Text>
+                <Text style={styles.sessionCode}>{sessionCode}</Text>
+              </View>
+            </Animated.View>
+
+            {/* OR Divider */}
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* Device Discovery Card */}
+            <Animated.View 
+              style={[
+                styles.deviceCard,
+                {
+                  opacity: deviceCardAnim,
+                  transform: [{ scale: deviceCardAnim }],
+                },
+              ]}
+            >
               <View style={styles.waveContainer}>
                 {connectionStatus === 'waiting' && (
                   <>
@@ -353,7 +398,7 @@ export default function ReceiveScreen() {
                 >
                   <Ionicons
                     name={Platform.OS === 'android' ? 'wifi' : 'bluetooth'}
-                    size={40}
+                    size={32}
                     color="#00FF88"
                   />
                 </Animated.View>
@@ -361,10 +406,10 @@ export default function ReceiveScreen() {
               <Text style={styles.deviceCardName}>{deviceName}</Text>
               <Text style={styles.deviceCardHint}>
                 {connectionStatus === 'waiting'
-                  ? 'Broadcasting to nearby devices...'
+                  ? 'Discoverable via device search'
                   : 'Receiving files...'}
               </Text>
-            </View>
+            </Animated.View>
 
             {/* Received Files */}
             {receivedFiles.length > 0 && (
@@ -401,7 +446,7 @@ export default function ReceiveScreen() {
               <Ionicons name="close-circle" size={20} color="#FF4444" />
               <Text style={styles.stopButtonText}>Stop Receiving</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -551,7 +596,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   deviceNameLabel: {
     fontSize: 14,
@@ -562,6 +607,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#00D9FF',
   },
+  methodsInfo: {
+    width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+  },
+  methodsTitle: {
+    fontSize: 14,
+    color: '#666680',
+    marginBottom: 12,
+  },
+  methodItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  methodText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
   startButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -571,19 +638,12 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 16,
-    width: 280,
+    width: '100%',
   },
   startButtonText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#0A0A0F',
-  },
-  hint: {
-    fontSize: 12,
-    color: '#444455',
-    textAlign: 'center',
-    marginTop: 16,
-    paddingHorizontal: 20,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -603,49 +663,99 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  qrCard: {
+    width: '100%',
+    backgroundColor: 'rgba(0, 217, 255, 0.05)',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 217, 255, 0.2)',
+  },
+  qrTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#00D9FF',
+    marginBottom: 16,
+  },
+  qrContainer: {
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 16,
+  },
+  sessionCodeContainer: {
+    alignItems: 'center',
+  },
+  sessionCodeLabel: {
+    fontSize: 12,
+    color: '#666680',
+    marginBottom: 4,
+  },
+  sessionCode: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 4,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  dividerText: {
+    fontSize: 12,
+    color: '#666680',
+    paddingHorizontal: 16,
+  },
   deviceCard: {
     width: '100%',
     backgroundColor: 'rgba(0, 255, 136, 0.05)',
     borderRadius: 20,
-    padding: 32,
+    padding: 24,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(0, 255, 136, 0.2)',
     marginBottom: 24,
   },
   waveContainer: {
-    width: 120,
-    height: 120,
+    width: 100,
+    height: 100,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   wave: {
     position: 'absolute',
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 2,
     borderColor: '#00FF88',
   },
   deviceCardIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: 'rgba(0, 255, 136, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   deviceCardName: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '600',
     color: '#FFFFFF',
-    letterSpacing: 1,
   },
   deviceCardHint: {
     fontSize: 12,
     color: '#666680',
-    marginTop: 8,
+    marginTop: 4,
     textAlign: 'center',
   },
   filesList: {
