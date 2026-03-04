@@ -287,7 +287,7 @@ export default function ReceiveScreen() {
 
             <Animated.View style={{ transform: [{ scale: startButtonAnim }] }}>
               <TouchableOpacity style={styles.startButton} onPress={startAdvertising}>
-                <Ionicons name="radio" size={24} color="#0A0A0F" />
+                <Ionicons name="radio-outline" size={24} color="#0A0A0F" />
                 <Text style={styles.startButtonText}>Start Receiving</Text>
               </TouchableOpacity>
             </Animated.View>

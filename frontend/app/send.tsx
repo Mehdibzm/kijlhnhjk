@@ -40,6 +40,112 @@ const DEMO_PEERS: PeerDevice[] = [
   { id: '3', name: 'Pixel 8 Pro', status: 'available' },
 ];
 
+// PeerItem Component - separated to avoid hook issues
+function PeerItem({ 
+  item, 
+  index, 
+  selectedPeer, 
+  connectionStatus,
+  onConnect 
+}: { 
+  item: PeerDevice; 
+  index: number;
+  selectedPeer: PeerDevice | null;
+  connectionStatus: string;
+  onConnect: (peer: PeerDevice) => void;
+}) {
+  const itemAnim = useRef(new Animated.Value(0)).current;
+  
+  useEffect(() => {
+    Animated.spring(itemAnim, {
+      toValue: 1,
+      tension: 50,
+      friction: 8,
+      delay: index * 100,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  return (
+    <Animated.View
+      style={{
+        transform: [
+          { scale: itemAnim },
+          { translateX: itemAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [-50, 0],
+          })},
+        ],
+        opacity: itemAnim,
+      }}
+    >
+      <TouchableOpacity
+        style={[
+          peerItemStyles.peerItem,
+          selectedPeer?.id === item.id && peerItemStyles.peerItemSelected,
+        ]}
+        onPress={() => onConnect(item)}
+        disabled={connectionStatus === 'connected'}
+      >
+        <View style={peerItemStyles.peerIcon}>
+          <Ionicons name="phone-portrait" size={24} color="#00D9FF" />
+        </View>
+        <View style={peerItemStyles.peerInfo}>
+          <Text style={peerItemStyles.peerName}>{item.name}</Text>
+          <Text style={peerItemStyles.peerStatus}>
+            {selectedPeer?.id === item.id && selectedPeer?.status === 'connecting' 
+              ? 'Connecting...' 
+              : 'Available'}
+          </Text>
+        </View>
+        {selectedPeer?.id === item.id && selectedPeer?.status === 'connecting' && (
+          <ActivityIndicator size="small" color="#00D9FF" />
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+const peerItemStyles = StyleSheet.create({
+  peerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  peerItemSelected: {
+    borderColor: '#00D9FF',
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+  },
+  peerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 217, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  peerInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  peerName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  peerStatus: {
+    fontSize: 12,
+    color: '#00FF88',
+    marginTop: 2,
+  },
+});
+
+
 export default function SendScreen() {
   const router = useRouter();
   const [isScanning, setIsScanning] = useState(false);
@@ -239,55 +345,14 @@ export default function SendScreen() {
   });
 
   const renderPeerItem = ({ item, index }: { item: PeerDevice; index: number }) => {
-    const itemAnim = useRef(new Animated.Value(0)).current;
-    
-    useEffect(() => {
-      Animated.spring(itemAnim, {
-        toValue: 1,
-        tension: 50,
-        friction: 8,
-        delay: index * 100,
-        useNativeDriver: true,
-      }).start();
-    }, []);
-
     return (
-      <Animated.View
-        style={{
-          transform: [
-            { scale: itemAnim },
-            { translateX: itemAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [-50, 0],
-            })},
-          ],
-          opacity: itemAnim,
-        }}
-      >
-        <TouchableOpacity
-          style={[
-            styles.peerItem,
-            selectedPeer?.id === item.id && styles.peerItemSelected,
-          ]}
-          onPress={() => connectToPeer(item)}
-          disabled={connectionStatus === 'connected'}
-        >
-          <View style={styles.peerIcon}>
-            <Ionicons name="phone-portrait" size={24} color="#00D9FF" />
-          </View>
-          <View style={styles.peerInfo}>
-            <Text style={styles.peerName}>{item.name}</Text>
-            <Text style={styles.peerStatus}>
-              {selectedPeer?.id === item.id && selectedPeer?.status === 'connecting' 
-                ? 'Connecting...' 
-                : 'Available'}
-            </Text>
-          </View>
-          {selectedPeer?.id === item.id && selectedPeer?.status === 'connecting' && (
-            <ActivityIndicator size="small" color="#00D9FF" />
-          )}
-        </TouchableOpacity>
-      </Animated.View>
+      <PeerItem 
+        item={item} 
+        index={index} 
+        selectedPeer={selectedPeer}
+        connectionStatus={connectionStatus}
+        onConnect={connectToPeer}
+      />
     );
   };
 
@@ -358,7 +423,7 @@ export default function SendScreen() {
                   </>
                 ) : (
                   <>
-                    <Ionicons name="radar" size={24} color="#0A0A0F" />
+                    <Ionicons name="scan" size={24} color="#0A0A0F" />
                     <Text style={styles.scanButtonText}>Start Scanning</Text>
                   </>
                 )}
